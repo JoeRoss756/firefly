@@ -1,49 +1,5 @@
 # Essay Analyzer
 
-A high-performance Go application for analyzing word frequencies across multiple web essays with concurrent processing and memory-efficient streaming.
-
-## Design Decisions
-
-### Word Processing
-- **Case Insensitive**: All words converted to lowercase for counting ("The" and "the" count as same word)
-- **Word Validation**: Words must be 3+ characters, alphabetic only, and exist in provided word bank
-- **Streaming Processing**: Large HTML files processed in chunks to prevent memory issues
-
-### Concurrency & Performance
-- **Rate Limiting**: 10 requests/second to respect server resources with exponential backoff on errors
-- **Worker Pool**: Configurable number of concurrent processors
-- **Incremental Aggregation**: Results aggregated as files complete processing
-
-### Memory Management
-- **Streaming HTML Processing**: Content processed in overlapping buffers
-- **Word Boundary Handling**: Prevents word splitting across chunk boundaries with fallback for edge cases
-- **Efficient Data Structures**: Memory-optimized word counting and storage
-
-### Edge Case Handling
-- **Boundary Fallback**: If chunks don't contain word boundaries, force split at max buffer size to prevent OOM
-- **Rate Limiting**: Exponential backoff on HTTP errors with configurable retry limits
-- **Graceful Degradation**: Continue processing other URLs if individual URLs fail
-
-### Web Scraping Compliance
-- **robots.txt Parsing**: Fetches and parses robots.txt once at startup for compliance checking
-- **URL Validation**: Every URL validated against robots.txt rules before fetching
-- **Pattern Matching**: Supports exact paths and wildcard patterns (e.g., `/tag/expire-images*`)
-- **User-Agent Specific**: Uses `EssayAnalyzer/1.0` user-agent for rule matching
-- **Graceful Fallback**: Assumes all URLs allowed if robots.txt not found (404)
-- **Single Domain Assumption**: Current implementation assumes all URLs from same domain (Engadget)
-
-## Architecture
-
-```
-cmd/essay_analyzer/     # CLI entry point
-internal/
-├── fetcher/           # HTTP client with rate limiting
-├── parser/            # HTML parsing and text extraction  
-├── processor/         # Word validation and streaming processing
-├── aggregator/        # Concurrent result aggregation
-├── wordbank/          # Word bank loading and validation
-└── config/            # Configuration management
-```
 
 ## Usage
 
@@ -62,13 +18,6 @@ go run cmd/essay_analyzer/main.go \
 - `--workers`: Number of concurrent workers (default: 10)
 - `--rate-limit`: Requests per second (default: 10.0)
 
-## Key Features
-
-- **High Concurrency**: Process multiple essays simultaneously
-- **Memory Efficient**: Stream processing prevents OOM on large files
-- **Rate Limited**: Respectful HTTP client with backoff
-- **Comprehensive Testing**: High test coverage across all packages
-- **Pretty JSON Output**: Top 10 word counts formatted for readability
 
 ## Output Format
 
@@ -84,3 +33,57 @@ go run cmd/essay_analyzer/main.go \
   "processing_time_seconds": 45.2
 }
 ```
+
+## Implementation Specifics
+
+### Parsing Strategy
+
+Our HTML parsing strategy prioritizes **content quality over robustness** by using Engadget-specific CSS selectors:
+
+1. **Primary selector**: `article header, [data-article-body='true']` - Extracts both article title/author and body content
+2. **Fallback selector**: `[data-article-body='true']` - Extracts only the article body content
+
+#### Why This Approach?
+
+**Quality Word Counts**: By targeting specific content elements, we avoid counting:
+- Navigation menu items ("Home", "About", "Contact")
+- Advertisement text ("Click here", "Subscribe now")
+- HTML/CSS class names and technical terms
+- Footer and sidebar content
+
+**Content-Only Focus**: The selectors specifically target editorial content, ensuring our word frequency analysis reflects the actual essays rather than website infrastructure.
+
+**Single-Domain Optimization**: Since all 40,000 URLs are from Engadget.com, we can optimize for their specific HTML structure rather than building a generic parser.
+
+#### Trade-offs
+
+- **Prioritizes Quality**: Better word frequency data from clean content extraction
+- **Sacrifices Robustness**: Won't work well on other websites without selector updates
+- **Future Work**: Could implement generic content detection algorithms (readability scoring, content-to-noise ratio analysis) at the cost of complexity and performance
+
+### robots.txt Compliance
+
+Our robots.txt implementation is optimized for **single-domain processing**:
+
+**Current Approach**:
+- Fetch robots.txt once at startup for engadget.com
+- Cache and reuse the parsed rules for all 40,000 URLs
+- Validate each URL against the cached rules before fetching
+
+**Benefits**:
+- **Performance**: Only one robots.txt request instead of 40,000
+- **Efficiency**: Cached rule parsing and pattern matching
+- **Compliance**: Full respect for crawl delays and disallow patterns
+
+**Limitations**:
+- **Single Domain**: Assumes all URLs are from the same domain
+- **Static Rules**: Doesn't handle robots.txt updates during processing
+
+#### Future Generalization
+
+For multi-domain support, the system could:
+- Extract domain from each URL and maintain a robots.txt cache per domain
+- Implement TTL-based cache expiration for robots.txt rules
+- Add domain-specific rate limiting and crawl delay handling
+
+**Trade-off**: This would add complexity and reduce performance (more network requests, cache management overhead) for the current single-domain use case.
